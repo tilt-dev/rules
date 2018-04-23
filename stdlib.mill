@@ -1,0 +1,12 @@
+def plugin(s, plugin_path):
+  plugin_output = run(s, plugin_path, preserve="deps").output
+  cmd = json_decode(plugin_output)
+  snapshot_with_deps = preserve(s, match_glob(cmd['deps']))
+
+  return run(snapshot_with_deps, cmd['argv'], cmd['artifacts'])
+
+def __parse_plugin_output(output):
+  return {
+    'deps': ['*.sh'],
+    'argv': ['ls']
+  }

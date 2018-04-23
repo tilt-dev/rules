@@ -1,0 +1,43 @@
+# -*- mode: Python -*-
+
+"""Standard JavaScript and NodeJS rules."""
+
+def yarn_install(s):
+  """Installs the current package's dependencies into the source tree with Yarn
+
+  Args:
+    s (Snapshot): The codebase. There must be a package.json at the root of the snapshot.
+        Optionally will also use yarn.lock at the root of the snapshot if there is one.
+
+  Returns:
+    Snapshot: A snapshot with the deps installed.
+  """
+  lock_files = preserve(s, match_glob([
+    'package.json',
+    'yarn.lock',
+    '.yarnrc',
+    '.babelrc',
+  ]))
+  collect = match_glob(['node_modules/**'])
+  node_modules = run(lock_files, ['/windmill/rules/yarn_install.sh'], collect=collect).output
+  return overlay(s, node_modules)
+
+def yarn_test(s):
+  """Runs the test script specified in package.json with Yarn.
+
+  Best for "simple" package.json testing. Does no parallelization on Windmill.
+
+  Args:
+    s (Snapshot): A codebase with complete node_modules. If you to download your dependencies,
+        use "yarn_install"
+
+  Returns:
+    Job: The result of the run
+  """
+  files = preserve(s, match_glob([
+    '**/*.js',
+    'node_modules/**',
+    'package.json',
+    '.babelrc',
+  ]))
+  return run(files, 'yarn --offline test')

@@ -1,0 +1,27 @@
+# -*- mode: Python -*-
+
+"""Standard python rules.
+
+Currently only supports pylint.
+"""
+
+def _pylint_file(s, f):
+  dependency = preserve(s, match_glob([f, '.pylintrc']))
+  return run(dependency, ['pylint', f])
+
+def pylint(s):
+  """Creates jobs that run 'pylint' for each python file in a code snapshot.
+
+  Includes all files with the suffix .py.
+
+  Args:
+    s (Snapshot): A source snapshot.
+
+  Returns:
+    job_set: A job set with a 'pylint' job for each matching file.
+  """
+  file_list = ls(preserve(s, match_glob('**/*.py')))
+  j = new_job_set()
+  for f in file_list:
+    j.add(f, lambda: _pylint_file(s, f))
+  return j
