@@ -1,0 +1,231 @@
+# -*- mode: Python -*-
+
+"""Standard Go rules.
+
+A standard Go BUILD.mill file should look like this::
+
+  # -*- mode: Python -*-
+  # Import symbols from the 'go' module.
+  load('go', 'go_create_tree', 'go_fmt', 'go_vet', 'go_build', 'go_test')
+
+  def main(s):
+    root_package = "github.com/NAME/REPO"
+    tree = go_create_tree(s, root_package)
+
+    j = new_job_set()
+    j.add('go_fmt', lambda: go_vet(s))
+    j.add('go_vet', lambda: go_fmt(s))
+    j.add('go_build', lambda: go_build(tree, package=root_package))
+    j.add('go_test', lambda: go_test(tree, package=root_package))
+    return j
+
+"""
+
+def go_create_tree(s, root_package):
+  """Creates a Go source tree.
+
+  Args:
+    s (Snapshot): A snapshot of your codebase.
+    root_package (str): The full name of the Go package at the root of the snapshot.
+
+  Returns:
+    Snapshot: A new code snapshot with the current package moved to src/{$root_package}
+  """
+  return reroot(s, 'src/' + root_package)
+
+def go_get(s, package):
+  """Installs the current package's dependencies into a Go source tree.
+
+  Args:
+    s (Snapshot): A formatted Go tree with your Go source at src/{$root_package}/...
+      If your Go code is at the root of the snapshot, use go_create_tree.
+    package (str): The name of the Go package to install deps for.
+      e.g., 'github.com/windmilleng/windmill'
+
+  Returns:
+    Snapshot: A new snapshot with the deps installed.
+  """
+  imports = run(s, ['/windmill/rules/go_get_list.sh', package]).stdout.strip().split('\n')
+  deps = run(empty_snapshot, ['/windmill/rules/go_get_fetch.sh'] + imports, collect=match_glob(['**'])).output
+  return overlay(s, deps)
+
+def _go_fmt_file(s, f):
+  dependency = preserve(s, match_glob(f))
+  return run(dependency, ["gofmt", "-d", "-e", f])
+
+def go_fmt(s):
+  """Creates jobs that run 'go fmt' for each file in a code snapshot.
+
+  Includes all files with the suffix .go, except for files under vendor.
+
+  Args:
+    s (Snapshot): A source snapshot.
+
+  Returns:
+    JobSet: A job set with a 'fmt' job for each matching file.
+  """
+  files = ls(preserve(s, match_glob(['**/*.go', '!vendor/**'])))
+  j = new_job_set()
+  for f in files:
+    j.add(f, lambda: _go_fmt_file(s, f))
+  return j
+
+def _go_vet_file(s, f, flags):
+  dependency = preserve(s, match_glob(f))
+  cmd = ["go", "tool", "vet"] + flags
+  cmd.append(f)
+  return run(dependency, cmd)
+
+def go_vet(s, flags=[]):
+  """Creates jobs that run 'go vet' for each file in a code snapshot.
+
+  Includes all files with the suffix .go, except for files under vendor.
+
+  Args:
+    s (Snapshot): A source snapshot
+    flags (list of str): Additional flags to pass to 'go vet' for configuring its checks.
+
+  Returns:
+    JobSet: A job for each matching file.
+  """
+  files = ls(preserve(s, match_glob(['**/*.go', '!vendor/**'])))
+  j = new_job_set()
+  for f in files:
+    j.add(f, lambda: _go_vet_file(s, f, flags))
+  return j
+
+def _overlay_extra_deps(s, package, pkg, extra_deps):
+  if pkg in extra_deps:
+    deps_for_pkg = extra_deps[pkg]
+    if len(deps_for_pkg) > 0:
+      dep_string = ""
+      for d in deps_for_pkg:
+        dep_string += "%s\n" % d
+
+      r = run(
+        s,
+        "mkdir -p src/%s/.windmill; touch src/%s/.windmill/extra_go_deps.txt; echo \"%s\" >> src/%s/.windmill/extra_go_deps.txt" %
+          (
+            package,
+            package,
+            dep_string,
+            package
+          ),
+          collect=match_glob("**/extra_go_deps.txt")
+      ).output
+      s = overlay(s, r)
+
+  return s
+
+def _go_build_pkg(s, package, pkg, extra_deps={}):
+  s = _overlay_extra_deps(s, package, pkg, extra_deps)
+
+  return plugin(s, ['/windmill/rules/go_build_plugin.sh', package, pkg])
+
+def go_binary(s, package):
+  """Returns a snapshot that contains a Go compiled binary.
+
+  Args:
+    s (Snapshot): A formatted Go tree with your Go source at src/{$package}/...
+      If your Go code is at the root of the snapshot, use go_create_tree.
+    package (str): The name of the Go package in the snapshot to build.
+      e.g., 'github.com/windmilleng/windmill'
+
+  Returns:
+    Snapshot: A snapshot with the binary at bin/$BINARY_NAME
+  """
+  # NOTE(nick): Right now, go_build_plugin makes assumptions about the
+  # structure of /vendor/ that are not generally true. In particular,
+  # it assumes that all Go repos have a root package, and "/vendor" is relative
+  # to that root.
+  #
+  # Long-term, _go_build_pkg should take a single package name
+  # and the plugin should handle vendoring correctly.
+  #
+  # Short-term, we assume a standard package structure of github.com/owner/repo
+  parts = package.split('/')
+  root_package = '/'.join(parts[:3])
+  sub_package = '/'.join(parts[3:])
+  if sub_package == '':
+    sub_package = '.'
+  return _go_build_pkg(s, root_package, sub_package).output
+
+def go_build(s, package, ignores=[], extra_deps={}):
+  """Creates jobs that run 'go build' for each package with Go files.
+
+  Args:
+    s (Snapshot): A formatted Go tree with your Go source at src/{$package}/...
+      If your Go code is at the root of the snapshot, use go_create_tree.
+    package (str): The name of the Go package in the snapshot to build, recursively.
+      e.g., 'github.com/windmilleng/windmill'
+    ignores (list of str): A list of packages to ignore.
+
+  Returns:
+    JobSet: Contains a job for each buildable package.
+  """
+  root_dir = 'src/%s' % package
+
+  # Grab all Go files that are not test files (we can't build packages that are only test files).
+  patterns = [
+    '%s/**/*.go' % root_dir,
+    '!%s/**/*_test.go' % root_dir,
+    '!%s/vendor/**' % root_dir
+  ]
+  matched_files = ls(preserve(s, match_glob(patterns)))
+  packages = _uniq([_dirname(_strip_root(f, root_dir)) for f in matched_files if f not in ignores])
+
+  j = new_job_set()
+  for p in packages:
+    j.add(p, lambda: _go_build_pkg(s, package, p, extra_deps))
+  return j
+
+def _go_test_pkg(s, package, pkg, timeout='30s', extra_deps={}):
+  s = _overlay_extra_deps(s, package, pkg, extra_deps)
+
+  return plugin(s, ['/windmill/rules/go_test_plugin.py', package, pkg, timeout])
+
+def go_test(s, package, ignores=[], timeout='30s', extra_deps={}):
+  """Creates jobs that run 'go test' for each package with _test.go files.
+
+  Args:
+    s (Snapshot): A formatted Go tree with your Go source at src/{$package}/...
+      If your Go code is at the root of the snapshot, use go_create_tree.
+    package (str): The name of the Go package in the snapshot to test, recursively.
+      e.g., 'github.com/windmilleng/windmill'
+    ignores (list of str): A list of packages to ignore.
+    timeout (str): A timeout string, to set a timeout for each package's tests. Defaults to 30s.
+    extra_deps (map of str to list of str): Extra dependencies for a package
+      e.g., 'github.com/windmilleng/windmill/mypackage' => ['src/github.com/windmilleng/windmill/file.a']
+
+  Returns:
+    JobSet: Contains a job for each testable package.
+  """
+  root_dir = 'src/%s' % package
+  patterns = ['%s/**/*_test.go' % root_dir, '!%s/vendor/**' % root_dir]
+  test_files = ls(preserve(s, match_glob(patterns)))
+  test_pkgs = _uniq([_dirname(_strip_root(f, root_dir)) for f in test_files])
+  test_pkgs = [p for p in test_pkgs if p not in ignores]
+
+  j = new_job_set()
+  for pkg in test_pkgs:
+    j.add(pkg, lambda: _go_test_pkg(s, package, pkg, timeout, extra_deps))
+  return j
+
+##### fake stdlib below
+def _uniq(els):
+  s = {}
+  for el in els:
+    s[el] = None
+  return s.keys()
+
+def _strip_root(p, root):
+  rootWithSlash = root + '/'
+  if p.startswith(rootWithSlash):
+    return p[len(rootWithSlash):]
+  return p
+
+def _dirname(f):
+  parts = f.rsplit('/', 1)
+  if len(parts) > 1:
+    return parts[0]
+  return '.'
