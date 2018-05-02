@@ -36,10 +36,14 @@ if [[ -e $ROOT/.windmill/extra_go_deps.txt ]]; then
     EXTRA_DIRS=`cat $ROOT/.windmill/extra_go_deps.txt`
 fi
 
+# Shell magic to get the current filename relative to pwd
+ME=${0#$PWD}
+
 ALL_DIRS="$DIRS
 $EXTRA_DIRS
 $CGO_DIRS
-!**/*_test.go"
+!**/*_test.go
+$ME"
 
 BIN_NAME=$(basename "$SHARD_PACKAGE")
 

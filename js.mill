@@ -12,14 +12,16 @@ def yarn_install(s):
   Returns:
     Snapshot: A snapshot with the deps installed.
   """
+  installer = _filename_in(s, 'yarn_install.sh')
   lock_files = preserve(s, match_glob([
     'package.json',
     'yarn.lock',
     '.yarnrc',
     '.babelrc',
+    installer,
   ]))
   collect = match_glob(['node_modules/**'])
-  node_modules = run(lock_files, ['/windmill/rules/yarn_install.sh'], collect=collect).output
+  node_modules = run(lock_files, [installer], network=True, collect=collect).output
   return overlay(s, node_modules)
 
 def yarn_test(s):

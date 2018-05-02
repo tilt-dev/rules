@@ -13,8 +13,8 @@ A standard Go BUILD.mill file should look like this::
     tree = go_create_tree(s, root_package)
 
     j = new_job_set()
-    j.add('go_fmt', lambda: go_vet(s))
-    j.add('go_vet', lambda: go_fmt(s))
+    j.add('go_fmt', lambda: go_fmt(s))
+    j.add('go_vet', lambda: go_vet(s))
     j.add('go_build', lambda: go_build(tree, package=root_package))
     j.add('go_test', lambda: go_test(tree, package=root_package))
     return j
@@ -45,8 +45,12 @@ def go_get(s, package):
   Returns:
     Snapshot: A new snapshot with the deps installed.
   """
-  imports = run(s, ['/windmill/rules/go_get_list.sh', package]).stdout.strip().split('\n')
-  deps = run(empty_snapshot, ['/windmill/rules/go_get_fetch.sh'] + imports, collect=match_glob(['**'])).output
+  lister = _filename_in(s, 'go_get_list.sh')
+  imports_run = run(s, [lister, package], network=True)
+  imports = imports_run.stdout.strip().split('\n')
+  fetcher = _filename_in(s, 'go_get_fetch.sh')
+  fetcher_snapshot = preserve(s, match_glob(fetcher))
+  deps = run(fetcher_snapshot, [fetcher] + imports, collect=match_glob(['**'])).output
   return overlay(s, deps)
 
 def _go_fmt_file(s, f):
@@ -102,25 +106,14 @@ def _overlay_extra_deps(s, package, pkg, extra_deps):
       for d in deps_for_pkg:
         dep_string += "%s\n" % d
 
-      r = run(
-        s,
-        "mkdir -p src/%s/.windmill; touch src/%s/.windmill/extra_go_deps.txt; echo \"%s\" >> src/%s/.windmill/extra_go_deps.txt" %
-          (
-            package,
-            package,
-            dep_string,
-            package
-          ),
-          collect=match_glob("**/extra_go_deps.txt")
-      ).output
-      s = overlay(s, r)
+      s = write_file(s, "src/%s/.windmill/extra_go_deps.txt" % package, dep_string)
 
   return s
 
 def _go_build_pkg(s, package, pkg, extra_deps={}):
   s = _overlay_extra_deps(s, package, pkg, extra_deps)
 
-  return plugin(s, ['/windmill/rules/go_build_plugin.sh', package, pkg])
+  return plugin(s, [_filename_in(s, 'go_build_plugin.sh'), package, pkg])
 
 def go_binary(s, package):
   """Returns a snapshot that contains a Go compiled binary.
@@ -182,7 +175,7 @@ def go_build(s, package, ignores=[], extra_deps={}):
 def _go_test_pkg(s, package, pkg, timeout='30s', extra_deps={}):
   s = _overlay_extra_deps(s, package, pkg, extra_deps)
 
-  return plugin(s, ['/windmill/rules/go_test_plugin.py', package, pkg, timeout])
+  return plugin(s, [_filename_in(s, 'go_test_plugin.py'), package, pkg, timeout])
 
 def go_test(s, package, ignores=[], timeout='30s', extra_deps={}):
   """Creates jobs that run 'go test' for each package with _test.go files.
