@@ -87,8 +87,8 @@ if os.path.isfile(extra_dirs_path):
         fully_qualified_deps.append(cleaned)
 
 me = sys.argv[0]
-if me.startswith(cwd):
-  me = me[len(cwd):]
+if me.startswith(cwd + "/"):
+  me = me[len(cwd + "/"):]
 fully_qualified_deps.append(me)
 
 install_path = os.path.join(root_package, shard)
