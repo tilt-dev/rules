@@ -43,6 +43,7 @@ ALL_DIRS="$DIRS
 $EXTRA_DIRS
 $CGO_DIRS
 !**/*_test.go
+!**/BUILD.mill
 $ME"
 
 BIN_NAME=$(basename "$SHARD_PACKAGE")
