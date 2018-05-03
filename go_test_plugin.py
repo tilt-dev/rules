@@ -86,6 +86,8 @@ if os.path.isfile(extra_dirs_path):
       if cleaned:
         fully_qualified_deps.append(cleaned)
 
+fully_qualified_deps.append("!**/BUILD.mill")
+
 me = sys.argv[0]
 if me.startswith(cwd + "/"):
   me = me[len(cwd + "/"):]
