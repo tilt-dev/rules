@@ -110,10 +110,9 @@ def _overlay_extra_deps(s, package, pkg, extra_deps):
 
   return s
 
-def _go_build_pkg(s, package, pkg, extra_deps={}):
+def _go_build_pkg(s, script, package, pkg, extra_deps={}):
   s = _overlay_extra_deps(s, package, pkg, extra_deps)
-
-  return plugin(s, [_filename_in(s, 'go_build_plugin.sh'), package, pkg])
+  return plugin(s, [script, package, pkg])
 
 def go_binary(s, package):
   """Returns a snapshot that contains a Go compiled binary.
@@ -127,6 +126,9 @@ def go_binary(s, package):
   Returns:
     Snapshot: A snapshot with the binary at bin/$BINARY_NAME
   """
+  # calculate the script up-front
+  script = _filename_in(s, 'go_build_plugin.sh')
+
   # NOTE(nick): Right now, go_build_plugin makes assumptions about the
   # structure of /vendor/ that are not generally true. In particular,
   # it assumes that all Go repos have a root package, and "/vendor" is relative
@@ -141,7 +143,7 @@ def go_binary(s, package):
   sub_package = '/'.join(parts[3:])
   if sub_package == '':
     sub_package = '.'
-  return _go_build_pkg(s, root_package, sub_package).output
+  return _go_build_pkg(s, script, root_package, sub_package).output
 
 def go_build(s, package, ignores=[], extra_deps={}):
   """Creates jobs that run 'go build' for each package with Go files.
@@ -156,6 +158,9 @@ def go_build(s, package, ignores=[], extra_deps={}):
   Returns:
     JobSet: Contains a job for each buildable package.
   """
+  # calculate the script up-front
+  script = _filename_in(s, 'go_build_plugin.sh')
+
   root_dir = 'src/%s' % package
 
   # Grab all Go files that are not test files (we can't build packages that are only test files).
@@ -169,13 +174,14 @@ def go_build(s, package, ignores=[], extra_deps={}):
 
   j = new_job_set()
   for p in packages:
-    j.add(p, lambda: _go_build_pkg(s, package, p, extra_deps))
+    j.add(p, lambda: _go_build_pkg(s, script, package, p, extra_deps))
   return j
 
-def _go_test_pkg(s, package, pkg, timeout='30s', extra_deps={}):
+def _go_test_pkg(s, script, package, pkg, timeout='30s', extra_deps={}):
   s = _overlay_extra_deps(s, package, pkg, extra_deps)
 
-  return plugin(s, [_filename_in(s, 'go_test_plugin.py'), package, pkg, timeout])
+  script = _filename_in(s, 'go_test_plugin.py')
+  return plugin(s, [script, package, pkg, timeout])
 
 def go_test(s, package, ignores=[], timeout='30s', extra_deps={}):
   """Creates jobs that run 'go test' for each package with _test.go files.
@@ -193,6 +199,9 @@ def go_test(s, package, ignores=[], timeout='30s', extra_deps={}):
   Returns:
     JobSet: Contains a job for each testable package.
   """
+  # calculate the script up-front
+  script = _filename_in(s, 'go_test_plugin.py')
+
   root_dir = 'src/%s' % package
   patterns = ['%s/**/*_test.go' % root_dir, '!%s/vendor/**' % root_dir]
   test_files = ls(preserve(s, match_glob(patterns)))
@@ -201,7 +210,7 @@ def go_test(s, package, ignores=[], timeout='30s', extra_deps={}):
 
   j = new_job_set()
   for pkg in test_pkgs:
-    j.add(pkg, lambda: _go_test_pkg(s, package, pkg, timeout, extra_deps))
+    j.add(pkg, lambda: _go_test_pkg(s, script, package, pkg, timeout, extra_deps))
   return j
 
 ##### fake stdlib below
