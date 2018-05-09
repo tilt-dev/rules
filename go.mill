@@ -46,11 +46,11 @@ def go_get(s, package):
     Snapshot: A new snapshot with the deps installed.
   """
   lister = _filename_in(s, 'go_get_list.sh')
-  imports_run = run(s, [lister, package], network=True)
+  imports_run = run(s, [lister, package])
   imports = imports_run.stdout.strip().split('\n')
   fetcher = _filename_in(s, 'go_get_fetch.sh')
   fetcher_snapshot = preserve(s, match_glob(fetcher))
-  deps = run(fetcher_snapshot, [fetcher] + imports, collect=match_glob(['**'])).output
+  deps = run(fetcher_snapshot, [fetcher] + imports, collect=match_glob(['**']), network=True).output
   return overlay(s, deps)
 
 def _go_fmt_file(s, f):
